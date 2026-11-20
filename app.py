@@ -116,7 +116,7 @@ if run_live:
     progress_bar.empty()
     chart_placeholder.empty()
 
-tab1, tab2, tab3 = st.tabs(["📈 1. Real-Time DAQ & DSP Filtering", "📐 2. Standard Calibration Curve (R² & LOD)", "🗄️ 3. SQLite Lab Notebook & Export"])
+tab1, tab2, tab3, tab4 = st.tabs(["📈 1. Real-Time DAQ & DSP Filtering", "📐 2. Standard Calibration Curve (R² & LOD)", "🗄️ 3. SQLite Lab Notebook & Export", "📂 4. Upload & Clean Lab Data"])
 
 with tab1:
     st.subheader("Raw Sensor Telemetry vs. Digital Signal Processing (DSP) Output")
@@ -178,6 +178,72 @@ with tab3:
     dl1, dl2 = st.columns(2)
     dl1.download_button("📥 Download Current Time-Series Stream (CSV)", data=df.to_csv(index=False).encode("utf-8"), file_name=f"{chip_id}_timeseries.csv", mime="text/csv")
     dl2.download_button("📥 Download All Archived Lab Runs (CSV)", data=runs_df.to_csv(index=False).encode("utf-8"), file_name="biolab_notebook_archive.csv", mime="text/csv")
+
+
+with tab4:
+    st.subheader("Upload & Clean Real Instrument Data (CSV / Excel)")
+    st.markdown("Upload raw `.csv` or `.xlsx` files exported from benchtop spectrometers, thermal loggers, or microcontrollers to automatically remove `NaN`/corrupt rows, apply DSP smoothing, and export publication-ready data.")
+    
+    uploaded_file = st.file_uploader("Drop raw instrument file here (.csv or .xlsx)", type=["csv", "xlsx"])
+    
+    if uploaded_file is not None:
+        try:
+            if uploaded_file.name.endswith(".csv"):
+                raw_user_df = pd.read_csv(uploaded_file)
+            else:
+                raw_user_df = pd.read_excel(uploaded_file)
+                
+            st.success(f"Loaded **{uploaded_file.name}** ({raw_user_df.shape[0]} rows, {raw_user_df.shape[1]} columns)")
+            
+            # 1. Automated Data Cleaning
+            c_opt1, c_opt2, c_opt3 = st.columns(3)
+            drop_na = c_opt1.checkbox("Drop Missing / NaN Rows", value=True)
+            drop_dup = c_opt2.checkbox("Remove Duplicate Timestamps", value=True)
+            smooth_win = c_opt3.slider("Smoothing Window (samples)", 1, 25, 5)
+            
+            clean_df = raw_user_df.copy()
+            if drop_dup:
+                clean_df = clean_df.drop_duplicates()
+            if drop_na:
+                clean_df = clean_df.dropna()
+                
+            removed_rows = len(raw_user_df) - len(clean_df)
+            
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Raw Rows", len(raw_user_df))
+            m2.metric("Cleaned Valid Rows", len(clean_df), f"-{removed_rows} corrupt/NaN rows")
+            m3.metric("Numeric Channels", len(clean_df.select_dtypes(include=[np.number]).columns))
+            
+            # 2. Interactive Column Selection & Plotting
+            all_cols = list(clean_df.columns)
+            num_cols = list(clean_df.select_dtypes(include=[np.number]).columns)
+            
+            if len(num_cols) >= 1:
+                sel_c1, sel_c2 = st.columns(2)
+                x_col = sel_c1.selectbox("Select X-Axis (Time / Sample Index)", all_cols, index=0)
+                y_col = sel_c2.selectbox("Select Y-Axis Sensor Channel", num_cols, index=min(1, len(num_cols)-1))
+                
+                clean_df[f"{y_col}_Filtered"] = clean_df[y_col].rolling(window=smooth_win, min_periods=1, center=True).mean()
+                
+                fig_u = go.Figure()
+                fig_u.add_trace(go.Scatter(x=clean_df[x_col], y=clean_df[y_col], name=f"Raw {y_col}", line=dict(color="rgba(0, 180, 216, 0.35)", width=1.5)))
+                fig_u.add_trace(go.Scatter(x=clean_df[x_col], y=clean_df[f"{y_col}_Filtered"], name=f"Cleaned & Filtered {y_col}", line=dict(color="#00b4d8", width=3)))
+                fig_u.update_layout(height=400, template="plotly_dark", title=f"Cleaned Telemetry: {y_col} vs. {x_col}", xaxis_title=x_col, yaxis_title=y_col)
+                st.plotly_chart(fig_u, use_container_width=True)
+                
+                st.dataframe(clean_df.head(20), use_container_width=True)
+                st.download_button(
+                    "📥 Download Cleaned & Filtered Dataset (CSV)",
+                    data=clean_df.to_csv(index=False).encode("utf-8"),
+                    file_name=f"cleaned_{uploaded_file.name.split('.')[0]}.csv",
+                    mime="text/csv"
+                )
+            else:
+                st.warning("No numeric sensor columns detected in the uploaded file.")
+        except Exception as e:
+            st.error(f"Error parsing file: {e}")
+    else:
+        st.info("💡 Tip: You can test this module right now by downloading a CSV from Tab 3 and uploading it back here.")
 
 st.markdown("---")
 st.caption("**Project Note:** I built this tool to simulate the daily data acquisition and analysis workflow of a microfluidic biosensor bench—reading noisy thermal and photodiode streams, applying digital filters, plotting calibration curves ($R^2$ and LOD), and archiving runs into SQLite.")
