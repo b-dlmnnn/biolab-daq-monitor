@@ -184,14 +184,15 @@ with tab4:
     st.subheader("Upload & Clean Real Instrument Data (CSV / Excel)")
     st.markdown("Upload raw `.csv` or `.xlsx` files exported from benchtop spectrometers, thermal loggers, or microcontrollers to automatically remove `NaN`/corrupt rows, apply DSP smoothing, and export publication-ready data.")
     
-    uploaded_file = st.file_uploader("Drop raw instrument file here (.csv or .xlsx)", type=["csv", "xlsx"])
+    skip_rows = st.number_input("Skip Top Device Metadata Rows (if instrument adds header text)", min_value=0, max_value=50, value=0)
+    uploaded_file = st.file_uploader("Drop raw instrument file here (.csv, .txt, or .xlsx)", type=["csv", "txt", "xlsx"])
     
     if uploaded_file is not None:
         try:
-            if uploaded_file.name.endswith(".csv"):
-                raw_user_df = pd.read_csv(uploaded_file)
+            if uploaded_file.name.endswith((".csv", ".txt")):
+                raw_user_df = pd.read_csv(uploaded_file, sep=None, engine="python", skiprows=skip_rows)
             else:
-                raw_user_df = pd.read_excel(uploaded_file)
+                raw_user_df = pd.read_excel(uploaded_file, skiprows=skip_rows)
                 
             st.success(f"Loaded **{uploaded_file.name}** ({raw_user_df.shape[0]} rows, {raw_user_df.shape[1]} columns)")
             
@@ -223,6 +224,9 @@ with tab4:
                 x_col = sel_c1.selectbox("Select X-Axis (Time / Sample Index)", all_cols, index=0)
                 y_col = sel_c2.selectbox("Select Y-Axis Sensor Channel", num_cols, index=min(1, len(num_cols)-1))
                 
+                sort_x = st.checkbox("Auto-Sort Data by X-Axis (Prevents tangled line charts)", value=True)
+                if sort_x:
+                    clean_df = clean_df.sort_values(by=x_col)
                 clean_df[f"{y_col}_Filtered"] = clean_df[y_col].rolling(window=smooth_win, min_periods=1, center=True).mean()
                 
                 fig_u = go.Figure()
